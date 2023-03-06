@@ -1,13 +1,16 @@
 /*
- * Copyright (c) 2020 Pedro Falcato
+ * Copyright (c) 2020 - 2023 Pedro Falcato
  * This file is part of Onyx, and is released under the terms of the MIT License
  * check LICENSE at the root directory for more information
+ *
+ * SPDX-License-Identifier: MIT
  */
 #include <onyx/irq.h>
 #include <onyx/net/netif.h>
 #include <onyx/panic.h>
 #include <onyx/percpu.h>
 #include <onyx/softirq.h>
+#include <onyx/tasklet.h>
 #include <onyx/timer.h>
 
 PER_CPU_VAR(unsigned int pending_vectors);
@@ -48,6 +51,12 @@ void softirq_handle()
         pending &= ~(1 << SOFTIRQ_VECTOR_NETRX);
     }
 #endif
+
+    if (pending & (1 << SOFTIRQ_VECTOR_TASKLET))
+    {
+        tasklet_run();
+        pending &= ~(1 << SOFTIRQ_VECTOR_TASKLET);
+    }
 
     write_per_cpu(pending_vectors, pending);
 

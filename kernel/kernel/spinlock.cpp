@@ -12,36 +12,54 @@
 #include <onyx/spinlock.h>
 #include <onyx/task_switching.h>
 
-__attribute__((always_inline)) static inline void post_lock_actions(struct spinlock *lock)
+#define __always_inline static inline __attribute__((always_inline))
+#define __noinline      __attribute__((noinline))
+
+__always_inline void post_lock_actions(struct spinlock *lock)
 {
 #ifdef CONFIG_SPINLOCK_DEBUG
     lock->holder = (unsigned long) __builtin_return_address(1);
 #endif
 }
 
-static inline void post_release_actions(struct spinlock *lock)
+__always_inline void post_release_actions(struct spinlock *lock)
 {
 #ifdef CONFIG_SPINLOCK_DEBUG
     lock->holder = 0xDEADBEEFDEADBEEF;
 #endif
 }
 
-void spin_lock_preempt(struct spinlock *lock)
+__always_inline bool spin_lock_fast_path(struct spinlock *lock, raw_spinlock_t cpu_nr_plus_one)
 {
     raw_spinlock_t expected_val = 0;
-    raw_spinlock_t what_to_insert = get_cpu_nr() + 1;
+    return __atomic_compare_exchange_n(&lock->lock, &expected_val, cpu_nr_plus_one, false,
+                                       __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+}
+
+__noinline void spin_lock_slow_path(struct spinlock *lock, raw_spinlock_t what_to_insert)
+{
+    raw_spinlock_t expected_val = 0;
 
     while (true)
     {
+        do
+        {
+            cpu_relax();
+        } while (__atomic_load_n(&lock->lock, __ATOMIC_RELAXED) != 0);
+
         if (__atomic_compare_exchange_n(&lock->lock, &expected_val, what_to_insert, false,
                                         __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
             break;
 
-        while (__atomic_load_n(&lock->lock, __ATOMIC_RELAXED) != 0)
-            cpu_relax();
-
         expected_val = 0;
     }
+}
+
+void spin_lock_preempt(struct spinlock *lock)
+{
+    raw_spinlock_t what_to_insert = get_cpu_nr() + 1;
+    if (!spin_lock_fast_path(lock, what_to_insert)) [[unlikely]]
+        spin_lock_slow_path(lock, what_to_insert);
 
     post_lock_actions(lock);
 }
@@ -73,10 +91,6 @@ void spin_unlock(struct spinlock *lock)
 
 int spin_try_lock(struct spinlock *lock)
 {
-
-    /* Disable preemption before locking, and enable it on release.
-     * This means locks get faster
-     */
     sched_disable_preempt();
 
     raw_spinlock_t expected_val = 0;
