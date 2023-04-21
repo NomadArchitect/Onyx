@@ -136,7 +136,7 @@ static inline bool in_kernel_space_regs(struct registers *regs)
 
 using registers_t = struct registers
 {
-    unsigned long x[32];
+    unsigned long x[31];
     unsigned long sp;
     unsigned long pc;
     unsigned long pstate;
